@@ -269,7 +269,7 @@ const titleEl = h('span.muted');
 const clockEl = h('span.clock', '0:00.0'), redEl = h('span.score.r', '0'), blueEl = h('span.score.b', '0'), statEl = h('span.muted.small');
 const camSel = h('select', { title: 'Camera', onchange: () => setCam(camSel.value) }, [['orbit', 'Orbit cam'], ['top', 'Top-down'], ['chase', 'Chase cam'], ['driver', 'Driver station']].map(([v, l]) => h('option', { value: v }, l)));
 const speedSel = h('select', { title: 'Simulation speed', onchange: () => { app.speed = +speedSel.value; } }, [['0.5', '0.5×'], ['1', '1×'], ['2', '2×'], ['4', '4×']].map(([v, l]) => h('option', { value: v, selected: v === '1' }, l)));
-const vrBtn = h('button.btn.primary', { disabled: true, title: 'Needs a WebXR browser + headset', onclick: enterVR }, 'VR not found');
+const vrBtn = h('button.btn', { title: 'Click to check for a headset', onclick: enterVR }, 'VR: checking…');
 $('topbar').append(h('span.brand', 'VEX', h('span', 'VR'), ' Sim'), startBtn, h('button.btn.danger', { onclick: stopProgram }, '■ Stop'), h('button.btn', { onclick: resetField }, '↺ Reset'), runAs, titleEl,
   h('span.spacer'), h('div', { id: 'hud' }, statEl, clockEl, redEl, blueEl), camSel, speedSel,
   h('button.btn.small', { title: 'Show the robot\'s path', onclick: (e) => { app.trail = !app.trail; e.target.classList.toggle('active', app.trail); }, className: 'btn small active' }, 'Trail'), vrBtn);
@@ -375,16 +375,49 @@ function resize() {
 }
 addEventListener('resize', resize);
 const vrui = app.vrui = new VRUI(renderer, scene, rig, app);
-navigator.xr?.isSessionSupported?.('immersive-vr').then((ok) => { if (ok) { vrBtn.disabled = false; vrBtn.textContent = 'Enter VR'; vrBtn.title = 'Start an immersive session (Quest / SteamVR)'; } }).catch(() => {});
+// Headsets are often plugged in or woken up after the page loads, so re-check on demand.
+async function checkVR() {
+  let ok = false, why;
+  if (!window.isSecureContext) why = 'This page is not on HTTPS, so the browser hides VR. Open the https:// address.';
+  else if (!navigator.xr) why = 'This browser has no WebXR. Use Chrome or Edge on the PC the headset is plugged into.';
+  else {
+    try { ok = await navigator.xr.isSessionSupported('immersive-vr'); } catch (e) { why = 'The browser blocked VR: ' + e.message; }
+    if (!ok && !why) why = 'The browser cannot see a headset. Start the Meta Quest Link (Oculus) PC app, put the headset on so it wakes, and in that app set Settings → General → OpenXR Runtime to Meta/Oculus. Then click this button again.';
+  }
+  vrBtn.textContent = renderer.xr.isPresenting ? 'Exit VR' : ok ? 'Enter VR' : 'VR not found';
+  vrBtn.classList.toggle('primary', ok);
+  vrBtn.title = ok ? 'Start an immersive session' : why;
+  return { ok, why };
+}
+checkVR();
+navigator.xr?.addEventListener?.('devicechange', checkVR);
+addEventListener('focus', checkVR);
 async function enterVR() {
   if (renderer.xr.isPresenting) return renderer.xr.getSession().end();
+  const { ok, why } = await checkVR();
+  if (!ok) { vrHelp(why); return; }
   try {
     const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
     camera.clearViewOffset(); camera.position.set(0, 0, 0); camera.rotation.set(0, 0, 0);
     session.addEventListener('end', () => { vrBtn.textContent = 'Enter VR'; setCam('orbit'); resize(); });
     await renderer.xr.setSession(session);
     vrBtn.textContent = 'Exit VR';
-  } catch (e) { app.toast('Could not start VR: ' + e.message); }
+  } catch (e) { vrHelp('The headset was found but the session did not start: ' + e.message + '. Make sure the headset is awake and no other VR app is running.'); }
+}
+function vrHelp(why) {
+  const back = h('div.modal-back', { onclick: (e) => { if (e.target === back) back.remove(); } },
+    h('div.modal', h('h2', 'No VR headset detected'), h('p', why),
+      h('h4', 'Checklist for a PC headset (Rift S, Quest Link, Vive, Index)'),
+      h('ol', { style: { lineHeight: '1.7', paddingLeft: '20px' } },
+        h('li', 'Use Chrome or Edge on the Windows PC the headset is plugged into (not a Chromebook, and not a remote desktop).'),
+        h('li', 'Start the headset software first: the Meta Quest Link / Oculus app for Rift S, or SteamVR for Vive and Index. The headset should show its home screen.'),
+        h('li', 'Make that software the active OpenXR runtime. Meta app: Settings → General → OpenXR Runtime → "Set Meta Quest Link as active". SteamVR: Settings → OpenXR → "Set SteamVR as OpenXR runtime".'),
+        h('li', 'Put the headset on (or cover its sensor) so it is awake, then press the VR button again. No page reload is needed.'),
+        h('li', 'Still nothing? Open edge://gpu or chrome://gpu and look for "OpenXR" under the XR section; school-managed browsers can have WebXR disabled by policy.')),
+      h('div.row', { style: { justifyContent: 'flex-end', marginTop: '12px' } },
+        h('button.btn', { onclick: async () => { const r = await checkVR(); if (r.ok) { back.remove(); enterVR(); } else app.toast('Still not found.'); } }, 'Check again'),
+        h('button.btn.primary', { onclick: () => back.remove() }, 'Close'))));
+  document.body.append(back);
 }
 
 // ---------- main loop ----------
