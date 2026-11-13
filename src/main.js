@@ -376,14 +376,20 @@ function resize() {
 addEventListener('resize', resize);
 const vrui = app.vrui = new VRUI(renderer, scene, rig, app);
 // Headsets are often plugged in or woken up after the page loads, so re-check on demand.
+let vrDiag = '';
 async function checkVR() {
   let ok = false, why;
+  const policy = document.featurePolicy ?? document.permissionsPolicy;
+  const d = { secure: window.isSecureContext, webxr: !!navigator.xr, framed: window.top !== window.self, policyAllowsXR: policy?.allowsFeature ? policy.allowsFeature('xr-spatial-tracking') : 'unknown', host: location.host };
   if (!window.isSecureContext) why = 'This page is not on HTTPS, so the browser hides VR. Open the https:// address.';
   else if (!navigator.xr) why = 'This browser has no WebXR. Use Chrome or Edge on the PC the headset is plugged into.';
   else {
-    try { ok = await navigator.xr.isSessionSupported('immersive-vr'); } catch (e) { why = 'The browser blocked VR: ' + e.message; }
+    try { ok = await navigator.xr.isSessionSupported('immersive-vr'); d.immersiveVR = ok; } catch (e) { d.immersiveVR = `${e.name}: ${e.message}`; why = 'The browser blocked VR on this address (' + e.name + '). This usually means the site that is serving the page forbids VR — open the game from GitHub Pages or from localhost instead.'; }
+    try { d.inlineSession = await navigator.xr.isSessionSupported('inline'); } catch (e) { d.inlineSession = e.name; }
     if (!ok && !why) why = 'The browser cannot see a headset. Start the Meta Quest Link (Oculus) PC app, put the headset on so it wakes, and in that app set Settings → General → OpenXR Runtime to Meta/Oculus. Then click this button again.';
   }
+  if (d.policyAllowsXR === false) why = 'The site serving this page (' + location.host + ') forbids VR through its Permissions-Policy, so no browser will find a headset here. Open the game from GitHub Pages or from localhost instead.';
+  vrDiag = Object.entries(d).map(([k, v]) => `${k}: ${v}`).join('\n') + '\nbrowser: ' + navigator.userAgent;
   vrBtn.textContent = renderer.xr.isPresenting ? 'Exit VR' : ok ? 'Enter VR' : 'VR not found';
   vrBtn.classList.toggle('primary', ok);
   vrBtn.title = ok ? 'Start an immersive session' : why;
@@ -414,6 +420,7 @@ function vrHelp(why) {
         h('li', 'Make that software the active OpenXR runtime. Meta app: Settings → General → OpenXR Runtime → "Set Meta Quest Link as active". SteamVR: Settings → OpenXR → "Set SteamVR as OpenXR runtime".'),
         h('li', 'Put the headset on (or cover its sensor) so it is awake, then press the VR button again. No page reload is needed.'),
         h('li', 'Still nothing? Open edge://gpu or chrome://gpu and look for "OpenXR" under the XR section; school-managed browsers can have WebXR disabled by policy.')),
+      h('h4', 'Diagnostics (send this if you ask for help)'), h('pre', { id: 'vr-diag' }, vrDiag),
       h('div.row', { style: { justifyContent: 'flex-end', marginTop: '12px' } },
         h('button.btn', { onclick: async () => { const r = await checkVR(); if (r.ok) { back.remove(); enterVR(); } else app.toast('Still not found.'); } }, 'Check again'),
         h('button.btn.primary', { onclick: () => back.remove() }, 'Close'))));
